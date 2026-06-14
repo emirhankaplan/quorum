@@ -17,11 +17,11 @@ import (
 
 // Ring is a thread-safe consistent-hash ring.
 type Ring struct {
-	mu       sync.RWMutex
-	vnodes   int               // virtual points per physical node
-	points   []uint32          // sorted ring positions
-	owner    map[uint32]string // ring position -> physical node id
-	members  map[string]bool   // set of physical nodes
+	mu      sync.RWMutex
+	vnodes  int               // virtual points per physical node
+	points  []uint32          // sorted ring positions
+	owner   map[uint32]string // ring position -> physical node id
+	members map[string]bool   // set of physical nodes
 }
 
 // New returns a ring with the given number of virtual nodes per physical node.

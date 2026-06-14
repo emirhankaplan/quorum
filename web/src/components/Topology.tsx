@@ -56,23 +56,29 @@ export default function Topology({ state, onEvent }: Props) {
   }, [state?.partition])
 
   useEffect(() => {
+    const timers: number[] = []
+    const expire = (id: number) =>
+      timers.push(window.setTimeout(() => setPulses((p) => p.filter((x) => x.id !== id)), 900))
     const off = onEvent((e) => {
       if (e.type === 'replicate') {
         const { from, to, mode } = e.data
         const id = ++counter.current
         setPulses((p) => [...p, { id, from, to, mode: mode === 'read' ? 'read' : 'write' }])
-        window.setTimeout(() => setPulses((p) => p.filter((x) => x.id !== id)), 900)
+        expire(id)
       } else if (e.type === 'repair') {
         const { from, to } = e.data
         const id = ++counter.current
         setPulses((p) => [...p, { id, from, to, mode: 'repair' }])
-        window.setTimeout(() => setPulses((p) => p.filter((x) => x.id !== id)), 900)
+        expire(id)
       } else if (e.type === 'conflict') {
         setConflict(true)
-        window.setTimeout(() => setConflict(false), 1600)
+        timers.push(window.setTimeout(() => setConflict(false), 1600))
       }
     })
-    return off
+    return () => {
+      off()
+      timers.forEach(clearTimeout)
+    }
   }, [onEvent])
 
   const partitioned = !!state?.partition && state.partition.length > 0

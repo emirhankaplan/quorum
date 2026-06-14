@@ -35,7 +35,11 @@ type Node struct {
 	mu    sync.RWMutex
 	store map[string][]kv.VersionedValue
 
-	clock    atomic.Uint64 // this node's logical clock (monotonic)
+	clockMu sync.Mutex // guards the whole next-clock computation (read+bump+store)
+	clock   uint64     // this node's logical clock (monotonic)
+
+	lifecycleMu sync.Mutex // serialises Drain/Revive so one completes before the other
+
 	ops      atomic.Uint64 // RPCs served — the lock-free live meter
 	alive    atomic.Bool
 	draining atomic.Bool
@@ -68,11 +72,11 @@ func New(id string, auth *security.Authenticator, tr transport.Transport, bus ev
 // Start registers the node's RPC handler with the transport.
 func (n *Node) Start() { n.tr.Register(n.id, n.handle) }
 
-func (n *Node) ID() string                    { return n.id }
+func (n *Node) ID() string                     { return n.id }
 func (n *Node) Identity() security.Identity    { return n.identity }
 func (n *Node) Transport() transport.Transport { return n.tr }
-func (n *Node) Ops() uint64                     { return n.ops.Load() }
-func (n *Node) Alive() bool                     { return n.alive.Load() }
+func (n *Node) Ops() uint64                    { return n.ops.Load() }
+func (n *Node) Alive() bool                    { return n.alive.Load() }
 
 // handle services an inbound replica RPC. The work runs on the worker pool and
 // the result is awaited through a Future — the book's "submit task, get future"
@@ -129,11 +133,19 @@ func (n *Node) NextClock(base vv.VersionVector) vv.VersionVector {
 	if base == nil {
 		base = vv.New()
 	}
-	c := n.clock.Add(1)
+	// The read-bump-store must be one atomic step: a bare atomic.Add followed by
+	// a conditional store lets two concurrent callers compute the *same* counter
+	// (both bump, both see base[n.id] >= their value, both store base+1), which
+	// would hand two distinct writes identical version vectors and silently drop
+	// one in Reconcile. A dedicated lock makes every NextClock return a strictly
+	// larger counter for this node.
+	n.clockMu.Lock()
+	c := n.clock + 1
 	if base[n.id] >= c {
 		c = base[n.id] + 1
-		n.clock.Store(c)
 	}
+	n.clock = c
+	n.clockMu.Unlock()
 	return base.Set(n.id, c)
 }
 
@@ -143,6 +155,11 @@ func (n *Node) NextClock(base vv.VersionVector) vv.VersionVector {
 // the interruption is observed at a safe point and the worker exits cleanly
 // instead of being torn down mid-operation.
 func (n *Node) Drain() {
+	// Serialise with Revive: without this lock a concurrent Revive could swap in
+	// a fresh pool that this Drain then shuts down, leaving the node "alive" with
+	// a dead pool.
+	n.lifecycleMu.Lock()
+	defer n.lifecycleMu.Unlock()
 	n.draining.Store(true)
 	n.pool.Load().Shutdown()
 	n.alive.Store(false)
@@ -152,6 +169,8 @@ func (n *Node) Drain() {
 // data survives the kill (the store is never discarded), modelling a process
 // restart on durable disk.
 func (n *Node) Revive() {
+	n.lifecycleMu.Lock()
+	defer n.lifecycleMu.Unlock()
 	n.pool.Store(NewWorkerPool(n.workers, 1024))
 	n.draining.Store(false)
 	n.alive.Store(true)

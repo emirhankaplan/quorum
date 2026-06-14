@@ -14,10 +14,24 @@ import type {
 let token = ''
 
 export async function loadToken(): Promise<string> {
-  const r = await fetch('/api/token')
-  const j = await r.json()
-  token = j.token
+  const { token: t } = await getJSON<{ token: string }>('/api/token')
+  token = t
   return token
+}
+
+// parseJSON reads the body once and tolerates a non-JSON error page (e.g. a
+// proxy 502) instead of throwing an opaque SyntaxError.
+async function parseJSON(r: Response): Promise<{ ok: boolean; status: number; body: any }> {
+  const text = await r.text()
+  let body: any = {}
+  if (text) {
+    try {
+      body = JSON.parse(text)
+    } catch {
+      body = { error: text.slice(0, 200) }
+    }
+  }
+  return { ok: r.ok, status: r.status, body }
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
@@ -26,13 +40,20 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  const j = await r.json()
-  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
+  const { ok, status, body: j } = await parseJSON(r)
+  if (!ok) throw new Error(j.error || `HTTP ${status}`)
   return j as T
 }
 
+async function getJSON<T>(path: string): Promise<T> {
+  const r = await fetch(path)
+  const { ok, status, body } = await parseJSON(r)
+  if (!ok) throw new Error(body.error || `HTTP ${status}`)
+  return body as T
+}
+
 export const api = {
-  state: () => fetch('/api/state').then((r) => r.json()) as Promise<ClusterState>,
+  state: () => getJSON<ClusterState>('/api/state'),
 
   put: (p: { coordinator: string; key: string; value: string; n: number; w: number; context?: Clock }) =>
     post<PutResult>('/api/put', { ...p, token }),
@@ -50,9 +71,7 @@ export const api = {
   forge: (key: string, op: string) => post<ForgeResult>('/api/security/forge-token', { key, op }),
 
   inspect: (node: string) =>
-    fetch(`/api/inspect?node=${encodeURIComponent(node)}`).then((r) => r.json()) as Promise<
-      Record<string, VersionedValue[]>
-    >,
+    getJSON<Record<string, VersionedValue[]>>(`/api/inspect?node=${encodeURIComponent(node)}`),
 }
 
 // Pointwise-max merge of version vectors — used when resolving siblings so the

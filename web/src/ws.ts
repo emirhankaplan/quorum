@@ -32,7 +32,12 @@ export function useCluster() {
       }
       ws.onerror = () => ws?.close()
       ws.onmessage = (ev) => {
-        const msg = JSON.parse(ev.data)
+        let msg: { type: string; data: unknown }
+        try {
+          msg = JSON.parse(ev.data)
+        } catch {
+          return // ignore malformed/non-JSON frames rather than throwing
+        }
         if (msg.type === 'state') {
           setState(msg.data as ClusterState)
         } else if (msg.type === 'event') {

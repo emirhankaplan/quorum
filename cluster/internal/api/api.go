@@ -71,6 +71,15 @@ func decode(r *http.Request, v any) error {
 	return json.NewDecoder(r.Body).Decode(v)
 }
 
+// requireMethod rejects any verb other than the expected one with 405.
+func requireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
+	if r.Method != method {
+		writeErr(w, http.StatusMethodNotAllowed, method+" only")
+		return false
+	}
+	return true
+}
+
 func clampQuorum(n, q int) (int, int) {
 	if n < 1 {
 		n = 1
@@ -97,8 +106,7 @@ type putReq struct {
 }
 
 func (s *Server) handlePut(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeErr(w, http.StatusMethodNotAllowed, "POST only")
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 	var req putReq
@@ -133,8 +141,7 @@ type getReq struct {
 }
 
 func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeErr(w, http.StatusMethodNotAllowed, "POST only")
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 	var req getReq
@@ -162,14 +169,23 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 // --- introspection ---
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
 	writeJSON(w, http.StatusOK, s.cl.State())
 }
 
 func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"token": s.cl.DefaultToken()})
 }
 
 func (s *Server) handleInspect(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
 	id := r.URL.Query().Get("node")
 	dump, err := s.cl.Inspect(id)
 	if err != nil {
@@ -186,6 +202,9 @@ type nodeReq struct {
 }
 
 func (s *Server) handleKill(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
 	var req nodeReq
 	if err := decode(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
@@ -199,6 +218,9 @@ func (s *Server) handleKill(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRevive(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
 	var req nodeReq
 	if err := decode(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
@@ -216,6 +238,9 @@ type partitionReq struct {
 }
 
 func (s *Server) handlePartition(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
 	var req partitionReq
 	if err := decode(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
@@ -229,6 +254,9 @@ func (s *Server) handlePartition(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHeal(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
 	s.cl.Heal()
 	writeJSON(w, http.StatusOK, s.cl.State())
 }
@@ -238,6 +266,9 @@ type latencyReq struct {
 }
 
 func (s *Server) handleLatency(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
 	var req latencyReq
 	if err := decode(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
@@ -254,6 +285,9 @@ type spoofReq struct {
 }
 
 func (s *Server) handleSpoof(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
 	var req spoofReq
 	if err := decode(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
@@ -273,6 +307,9 @@ type forgeReq struct {
 }
 
 func (s *Server) handleForge(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
 	var req forgeReq
 	if err := decode(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")

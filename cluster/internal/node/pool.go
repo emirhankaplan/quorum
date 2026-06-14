@@ -9,11 +9,17 @@ import "sync"
 // queue is a buffered channel (Go's threadsafe_queue), the workers are
 // goroutines, and Submit returns a Future backed by a one-shot channel
 // (Go's std::future/std::promise).
+//
+// Shutdown is signalled through a `done` channel rather than by closing `jobs`,
+// for two reasons: the job channel is never closed (so a concurrent submit can
+// never panic with send-on-closed), and submit never sends while holding a lock
+// (so it can never deadlock with Shutdown).
 type WorkerPool struct {
-	jobs      chan func()
-	wg        sync.WaitGroup
-	mu        sync.Mutex
-	accepting bool
+	jobs    chan func()
+	done    chan struct{}
+	wg      sync.WaitGroup
+	mu      sync.Mutex
+	stopped bool
 }
 
 // NewWorkerPool starts `workers` goroutines draining a queue of `queue` slots.
@@ -24,45 +30,64 @@ func NewWorkerPool(workers, queue int) *WorkerPool {
 	if queue < 1 {
 		queue = 1
 	}
-	p := &WorkerPool{jobs: make(chan func(), queue), accepting: true}
+	p := &WorkerPool{jobs: make(chan func(), queue), done: make(chan struct{})}
 	p.wg.Add(workers)
 	for i := 0; i < workers; i++ {
 		go func() {
 			defer p.wg.Done()
-			for job := range p.jobs {
-				job()
+			for {
+				select {
+				case job := <-p.jobs:
+					job()
+				case <-p.done:
+					return
+				}
 			}
 		}()
 	}
 	return p
 }
 
-// submit enqueues a job. It returns false once the pool is draining. The send
-// happens under the same mutex that Shutdown uses to close the channel, so a
-// send-on-closed-channel panic is impossible.
+// submit enqueues a job, returning false once the pool is shutting down. The
+// send is performed under no lock and `jobs` is never closed, so submit can
+// neither deadlock with Shutdown nor panic.
 func (p *WorkerPool) submit(job func()) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if !p.accepting {
+	select {
+	case <-p.done:
+		return false
+	default:
+	}
+	select {
+	case p.jobs <- job:
+		return true
+	case <-p.done:
 		return false
 	}
-	p.jobs <- job
-	return true
 }
 
-// Shutdown stops accepting work and blocks until every queued and in-flight job
-// has finished — a clean cooperative drain rather than an abrupt teardown.
+// Shutdown stops accepting work, lets the workers exit, then runs any jobs still
+// sitting in the queue so their Futures resolve — a clean cooperative drain with
+// no leaked waiters and no send-on-closed panic. Idempotent.
 func (p *WorkerPool) Shutdown() {
 	p.mu.Lock()
-	if !p.accepting {
+	if p.stopped {
 		p.mu.Unlock()
 		p.wg.Wait()
 		return
 	}
-	p.accepting = false
-	close(p.jobs)
+	p.stopped = true
+	close(p.done)
 	p.mu.Unlock()
+
 	p.wg.Wait()
+	for {
+		select {
+		case job := <-p.jobs:
+			job()
+		default:
+			return
+		}
+	}
 }
 
 // Future is the result handle returned by Submit — the std::future analogue.
