@@ -1,0 +1,8 @@
+**/node_modules
+web/dist
+bin
+.git
+.github
+*.md
+!cluster/**
+tmp

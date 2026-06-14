@@ -1,0 +1,20 @@
+# Go
+/bin/
+/cluster/quorum
+*.test
+*.out
+
+# Node / Vite
+/web/node_modules/
+/web/dist/
+npm-debug.log*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local
+/tmp/
+*.local

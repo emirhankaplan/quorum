@@ -1,0 +1,10 @@
+services:
+  quorum:
+    build: .
+    image: quorum:latest
+    ports:
+      - "8080:8080"
+    environment:
+      # Set a stable secret in real deployments; omit for an ephemeral demo.
+      - QUORUM_SECRET=change-me-for-anything-real
+    restart: unless-stopped
